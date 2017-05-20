@@ -25,13 +25,16 @@ import java.io.Writer;
 import java.util.Iterator;
 import javax.activation.DataHandler;
 import javax.xml.stream.XMLStreamException;
+import javax.xml.stream.XMLStreamWriter;
 import javax.xml.transform.dom.DOMSource;
 
 import org.apache.axiom.attachments.Attachments;
+import org.apache.axiom.om.OMDataSource;
 import org.apache.axiom.om.OMElement;
 import org.apache.axiom.om.OMException;
 import org.apache.axiom.om.OMOutputFormat;
 import org.apache.axiom.om.OMXMLBuilderFactory;
+import org.apache.axiom.om.ds.AbstractPushOMDataSource;
 import org.apache.axiom.om.impl.MTOMConstants;
 import org.apache.axiom.om.impl.OMMultipartWriter;
 import org.apache.axiom.soap.SOAPBody;
@@ -39,10 +42,15 @@ import org.apache.axiom.soap.SOAPEnvelope;
 import org.apache.axiom.soap.SOAPFactory;
 import org.apache.axiom.soap.SOAPMessage;
 import org.apache.axiom.soap.SOAPProcessingException;
+import org.apache.axiom.util.stax.wrapper.XMLStreamWriterWrapper;
 import org.w3c.dom.Document;
 
+import org.springframework.oxm.Marshaller;
+import org.springframework.oxm.Unmarshaller;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
+import org.springframework.util.xml.StaxUtils;
+import org.springframework.ws.MarshallerSupportingWebServiceMessage;
 import org.springframework.ws.mime.Attachment;
 import org.springframework.ws.soap.AbstractSoapMessage;
 import org.springframework.ws.soap.SoapEnvelope;
@@ -63,7 +71,8 @@ import org.springframework.ws.transport.TransportOutputStream;
  * @see SOAPMessage
  * @since 1.0.0
  */
-public class AxiomSoapMessage extends AbstractSoapMessage implements StreamingWebServiceMessage {
+public class AxiomSoapMessage extends AbstractSoapMessage
+		implements StreamingWebServiceMessage, MarshallerSupportingWebServiceMessage {
 
 	private static final String EMPTY_SOAP_ACTION = "\"\"";
 
@@ -409,4 +418,67 @@ public class AxiomSoapMessage extends AbstractSoapMessage implements StreamingWe
 		}
 	}
 
+	private OMElement createPayloadElement(final Marshaller marshaller, final Object graph) {
+		OMDataSource ds = new AbstractPushOMDataSource() {
+			@Override
+			public boolean isDestructiveWrite() {
+				return false;
+			}
+			
+			@Override
+			public void serialize(XMLStreamWriter xmlWriter) throws XMLStreamException {
+				try {
+					marshaller.marshal(graph, StaxUtils.createCustomStaxResult(new XMLStreamWriterFilter(xmlWriter)));
+				} catch (IOException ex) {
+					throw new XMLStreamException(ex);
+				}
+			}
+		};
+		return axiomFactory.createOMElement(ds);
+	}
+
+	@Override
+	public Object unmarshal(Unmarshaller unmarshaller) throws IOException {
+		OMElement payload = axiomMessage.getSOAPEnvelope().getBody().getFirstElement();
+		if (payload == null) {
+			return null;
+		}
+		// TODO: we consumed the payload; now what?
+		return unmarshaller.unmarshal(payload.getSAXSource(false));
+	}
+
+	@Override
+	public void marshal(Marshaller marshaller, Object graph) throws IOException {
+		axiomMessage.getSOAPEnvelope().getBody().addChild(createPayloadElement(marshaller, graph));
+	}
+
+	private static class XMLStreamWriterFilter extends XMLStreamWriterWrapper {
+		public XMLStreamWriterFilter(XMLStreamWriter parent) {
+			super(parent);
+		}
+
+		@Override
+		public void writeStartDocument() throws XMLStreamException {
+		}
+
+		@Override
+		public void writeStartDocument(String encoding, String version) throws XMLStreamException {
+		}
+
+		@Override
+		public void writeStartDocument(String version) throws XMLStreamException {
+		}
+
+		@Override
+		public void writeEndDocument() throws XMLStreamException {
+		}
+
+		@Override
+		public void close() throws XMLStreamException {
+		}
+
+		@Override
+		public void flush() throws XMLStreamException {
+		}
+	}
 }

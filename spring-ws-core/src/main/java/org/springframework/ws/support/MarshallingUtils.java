@@ -25,6 +25,7 @@ import org.springframework.oxm.Unmarshaller;
 import org.springframework.oxm.mime.MimeContainer;
 import org.springframework.oxm.mime.MimeMarshaller;
 import org.springframework.oxm.mime.MimeUnmarshaller;
+import org.springframework.ws.MarshallerSupportingWebServiceMessage;
 import org.springframework.ws.WebServiceMessage;
 import org.springframework.ws.mime.Attachment;
 import org.springframework.ws.mime.MimeMessage;
@@ -52,6 +53,9 @@ public abstract class MarshallingUtils {
 	 * @throws IOException in case of I/O errors
 	 */
 	public static Object unmarshal(Unmarshaller unmarshaller, WebServiceMessage message) throws IOException {
+		if (message instanceof MarshallerSupportingWebServiceMessage) {
+			return ((MarshallerSupportingWebServiceMessage) message).unmarshal(unmarshaller);
+		}
 		Source payload = message.getPayloadSource();
 		if (payload == null) {
 			return null;
@@ -75,7 +79,10 @@ public abstract class MarshallingUtils {
 	 * @throws IOException in case of I/O errors
 	 */
 	public static void marshal(Marshaller marshaller, Object graph, WebServiceMessage message) throws IOException {
-		if (marshaller instanceof MimeMarshaller && message instanceof MimeMessage) {
+		if (message instanceof MarshallerSupportingWebServiceMessage) {
+			((MarshallerSupportingWebServiceMessage) message).marshal(marshaller, graph);
+		}
+		else if (marshaller instanceof MimeMarshaller && message instanceof MimeMessage) {
 			MimeMarshaller mimeMarshaller = (MimeMarshaller) marshaller;
 			MimeMessageContainer container = new MimeMessageContainer((MimeMessage) message);
 			mimeMarshaller.marshal(graph, message.getPayloadResult(), container);
