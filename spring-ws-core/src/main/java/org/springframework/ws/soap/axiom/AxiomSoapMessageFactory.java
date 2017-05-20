@@ -21,23 +21,23 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Iterator;
 import java.util.Locale;
+
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+import javax.xml.transform.stax.StAXSource;
 
 import org.apache.axiom.attachments.Attachments;
 import org.apache.axiom.om.OMAbstractFactory;
 import org.apache.axiom.om.OMException;
+import org.apache.axiom.om.OMXMLBuilderFactory;
 import org.apache.axiom.om.impl.MTOMConstants;
 import org.apache.axiom.soap.SOAP11Constants;
-import org.apache.axiom.soap.SOAP11Version;
 import org.apache.axiom.soap.SOAP12Constants;
-import org.apache.axiom.soap.SOAP12Version;
 import org.apache.axiom.soap.SOAPFactory;
 import org.apache.axiom.soap.SOAPMessage;
 import org.apache.axiom.soap.SOAPModelBuilder;
-import org.apache.axiom.soap.impl.builder.MTOMStAXSOAPModelBuilder;
-import org.apache.axiom.soap.impl.builder.StAXSOAPModelBuilder;
+import org.apache.axiom.soap.SOAPVersion;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -267,18 +267,16 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 		return contentType.contains(MULTI_PART_RELATED_CONTENT_TYPE);
 	}
 
-	@SuppressWarnings("deprecation")
 	/** Creates an AxiomSoapMessage without attachments. */
 	private AxiomSoapMessage createAxiomSoapMessage(InputStream inputStream, String contentType, String soapAction)
 			throws XMLStreamException {
 		XMLStreamReader reader = inputFactory.createXMLStreamReader(inputStream, getCharSetEncoding(contentType));
-		String envelopeNamespace = getSoapEnvelopeNamespace(contentType);
-		SOAPModelBuilder builder = new StAXSOAPModelBuilder(reader, soapFactory, envelopeNamespace);
+		SOAPModelBuilder builder = OMXMLBuilderFactory.createStAXSOAPModelBuilder(soapFactory.getMetaFactory(), reader);
 		SOAPMessage soapMessage = builder.getSOAPMessage();
+		validateSOAPVersion(soapMessage, contentType);
 		return new AxiomSoapMessage(soapMessage, soapAction, payloadCaching, langAttributeOnSoap11FaultString);
 	}
 
-	@SuppressWarnings("deprecation")
 	/** Creates an AxiomSoapMessage with attachments. */
 	private AxiomSoapMessage createMultiPartAxiomSoapMessage(InputStream inputStream,
 															 String contentType,
@@ -289,20 +287,31 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 		XMLStreamReader reader = inputFactory.createXMLStreamReader(attachments.getRootPartInputStream(),
 				getCharSetEncoding(attachments.getRootPartContentType()));
 		SOAPModelBuilder builder;
-		String envelopeNamespace = getSoapEnvelopeNamespace(contentType);
 		if (MTOMConstants.SWA_TYPE.equals(attachments.getAttachmentSpecType()) ||
 				MTOMConstants.SWA_TYPE_12.equals(attachments.getAttachmentSpecType())) {
-			builder = new StAXSOAPModelBuilder(reader, soapFactory, envelopeNamespace);
+			builder = OMXMLBuilderFactory.createStAXSOAPModelBuilder(soapFactory.getMetaFactory(), reader);
 		}
 		else if (MTOMConstants.MTOM_TYPE.equals(attachments.getAttachmentSpecType())) {
-			builder = new MTOMStAXSOAPModelBuilder(reader, attachments, envelopeNamespace);
+			builder = OMXMLBuilderFactory.createSOAPModelBuilder(soapFactory.getMetaFactory(),
+					new StAXSource(reader), attachments);
 		}
 		else {
 			throw new AxiomSoapMessageCreationException(
 					"Unknown attachment type: [" + attachments.getAttachmentSpecType() + "]");
 		}
-		return new AxiomSoapMessage(builder.getSOAPMessage(), attachments, soapAction, payloadCaching,
+		SOAPMessage soapMessage = builder.getSOAPMessage();
+		validateSOAPVersion(soapMessage, contentType);
+		return new AxiomSoapMessage(soapMessage, attachments, soapAction, payloadCaching,
 				langAttributeOnSoap11FaultString);
+	}
+
+	private void validateSOAPVersion(SOAPMessage soapMessage, String contentType) {
+		SOAPFactory actualFactory = (SOAPFactory)soapMessage.getOMFactory();
+		String envelopeNamespace = getSoapEnvelopeNamespace(contentType);
+		if (actualFactory != soapFactory ||
+				!actualFactory.getSOAPVersion().getEnvelopeURI().equals(envelopeNamespace)) {
+			throw new AxiomSoapMessageCreationException("SOAP version mismatch");
+		}
 	}
 
 	private String getSoapEnvelopeNamespace(String contentType) {
@@ -372,13 +381,12 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 		return inputFactory;
 	}
 
-
 	public String toString() {
 		StringBuilder builder = new StringBuilder("AxiomSoapMessageFactory[");
-		if (soapFactory.getSOAPVersion() == SOAP11Version.getSingleton()) {
+		if (soapFactory.getSOAPVersion() == SOAPVersion.SOAP11) {
 			builder.append("SOAP 1.1");
 		}
-		else if (soapFactory.getSOAPVersion() == SOAP12Version.getSingleton()) {
+		else if (soapFactory.getSOAPVersion() == SOAPVersion.SOAP12) {
 			builder.append("SOAP 1.2");
 		}
 		builder.append(',');

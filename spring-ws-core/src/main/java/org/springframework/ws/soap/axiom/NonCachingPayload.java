@@ -24,10 +24,11 @@ import javax.xml.stream.XMLStreamReader;
 import javax.xml.stream.XMLStreamWriter;
 import javax.xml.transform.Result;
 
+import org.apache.axiom.blob.Blobs;
 import org.apache.axiom.om.OMDataSource;
 import org.apache.axiom.om.OMElement;
 import org.apache.axiom.om.OMNamespace;
-import org.apache.axiom.om.ds.ByteArrayDataSource;
+import org.apache.axiom.om.ds.BlobOMDataSource;
 import org.apache.axiom.om.util.StAXUtils;
 import org.apache.axiom.soap.SOAPBody;
 import org.apache.axiom.soap.SOAPFactory;
@@ -136,7 +137,7 @@ class NonCachingPayload extends AbstractPayload {
 				delegate.flush();
 				if (baos.size() > 0) {
 					byte[] buf = baos.toByteArray();
-					OMDataSource dataSource = new ByteArrayDataSource(buf, encoding);
+					OMDataSource dataSource = new BlobOMDataSource(Blobs.createBlob(buf), encoding);
 					OMNamespace namespace =
 							getAxiomFactory().createOMNamespace(name.getNamespaceURI(), name.getPrefix());
 					OMElement payloadElement =
