@@ -26,6 +26,8 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 
 import org.apache.axiom.attachments.Attachments;
+import org.apache.axiom.mime.ContentType;
+import org.apache.axiom.mime.MediaType;
 import org.apache.axiom.om.OMAbstractFactory;
 import org.apache.axiom.om.OMException;
 import org.apache.axiom.om.impl.MTOMConstants;
@@ -35,6 +37,7 @@ import org.apache.axiom.soap.SOAP12Constants;
 import org.apache.axiom.soap.SOAP12Version;
 import org.apache.axiom.soap.SOAPFactory;
 import org.apache.axiom.soap.SOAPMessage;
+import org.apache.axiom.soap.SOAPModelBuilder;
 import org.apache.axiom.soap.impl.builder.MTOMStAXSOAPModelBuilder;
 import org.apache.axiom.soap.impl.builder.StAXSOAPModelBuilder;
 import org.apache.commons.logging.Log;
@@ -223,20 +226,26 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 			inputFactory = createXmlInputFactory();
 		}
 		TransportInputStream transportInputStream = (TransportInputStream) inputStream;
-		String contentType = getHeaderValue(transportInputStream, TransportConstants.HEADER_CONTENT_TYPE);
-		if (!StringUtils.hasLength(contentType)) {
+		String contentTypeString = getHeaderValue(transportInputStream, TransportConstants.HEADER_CONTENT_TYPE);
+		ContentType contentType;
+		if (!StringUtils.hasLength(contentTypeString)) {
 			if (logger.isDebugEnabled()) {
 				logger.debug("TransportInputStream has no Content-Type header; defaulting to \"" +
-						SoapVersion.SOAP_11.getContentType() + "\"");
+						soapFactory.getSOAPVersion().getMediaType() + "\"");
 			}
-			contentType = SoapVersion.SOAP_11.getContentType();
+			contentType = new ContentType(soapFactory.getSOAPVersion().getMediaType(), new String[] {});
+		} else {
+			contentType = new ContentType(contentTypeString);
 		}
 		String soapAction = getHeaderValue(transportInputStream, TransportConstants.HEADER_SOAP_ACTION);
 		if (!StringUtils.hasLength(soapAction)) {
-			soapAction = SoapUtils.extractActionFromContentType(contentType);
+			soapAction = contentType.getParameter("action");
+			if (soapAction == null) {
+				soapAction = TransportConstants.EMPTY_SOAP_ACTION;
+			}
 		}
 		try {
-			if (isMultiPartRelated(contentType)) {
+			if (contentType.getMediaType().equals(MediaType.MULTIPART_RELATED)) {
 				return createMultiPartAxiomSoapMessage(inputStream, contentType, soapAction);
 			}
 			else {
@@ -260,33 +269,30 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 		return contentType;
 	}
 
-	private boolean isMultiPartRelated(String contentType) {
-		contentType = contentType.toLowerCase(Locale.ENGLISH);
-		return contentType.contains(MULTI_PART_RELATED_CONTENT_TYPE);
-	}
-
 	@SuppressWarnings("deprecation")
 	/** Creates an AxiomSoapMessage without attachments. */
 	private AxiomSoapMessage createAxiomSoapMessage(InputStream inputStream, String contentType, String soapAction)
 			throws XMLStreamException {
 		XMLStreamReader reader = inputFactory.createXMLStreamReader(inputStream, getCharSetEncoding(contentType));
 		String envelopeNamespace = getSoapEnvelopeNamespace(contentType);
-		StAXSOAPModelBuilder builder = new StAXSOAPModelBuilder(reader, soapFactory, envelopeNamespace);
-		SOAPMessage soapMessage = builder.getSoapMessage();
+		SOAPModelBuilder builder = new StAXSOAPModelBuilder(reader, soapFactory, envelopeNamespace);
+		SOAPMessage soapMessage = builder.getSOAPMessage();
 		return new AxiomSoapMessage(soapMessage, soapAction, payloadCaching, langAttributeOnSoap11FaultString);
 	}
 
 	@SuppressWarnings("deprecation")
 	/** Creates an AxiomSoapMessage with attachments. */
 	private AxiomSoapMessage createMultiPartAxiomSoapMessage(InputStream inputStream,
-															 String contentType,
+															 ContentType contentType,
 															 String soapAction) throws XMLStreamException {
 		Attachments attachments =
-				new Attachments(inputStream, contentType, attachmentCaching, attachmentCacheDir.getAbsolutePath(),
+				new Attachments(inputStream, contentType.toString(), attachmentCaching, attachmentCacheDir.getAbsolutePath(),
 						Integer.toString(attachmentCacheThreshold));
 		XMLStreamReader reader = inputFactory.createXMLStreamReader(attachments.getRootPartInputStream(),
 				getCharSetEncoding(attachments.getRootPartContentType()));
-		StAXSOAPModelBuilder builder;
+		SOAPModelBuilder builder;
+		MediaType rootPartContentType = new MediaType(contentType.getParameter("type"));
+		
 		String envelopeNamespace = getSoapEnvelopeNamespace(contentType);
 		if (MTOMConstants.SWA_TYPE.equals(attachments.getAttachmentSpecType()) ||
 				MTOMConstants.SWA_TYPE_12.equals(attachments.getAttachmentSpecType())) {
@@ -299,7 +305,7 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 			throw new AxiomSoapMessageCreationException(
 					"Unknown attachment type: [" + attachments.getAttachmentSpecType() + "]");
 		}
-		return new AxiomSoapMessage(builder.getSoapMessage(), attachments, soapAction, payloadCaching,
+		return new AxiomSoapMessage(builder.getSOAPMessage(), attachments, soapAction, payloadCaching,
 				langAttributeOnSoap11FaultString);
 	}
 
