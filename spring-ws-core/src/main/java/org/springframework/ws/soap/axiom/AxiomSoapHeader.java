@@ -76,7 +76,6 @@ abstract class AxiomSoapHeader extends AxiomSoapElement implements SoapHeader {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public Iterator<SoapHeaderElement> examineMustUnderstandHeaderElements(String role) {
 		try {
 			return new AxiomSoapHeaderElementIterator(getAxiomHeader().examineMustUnderstandHeaderBlocks(role));
@@ -87,7 +86,6 @@ abstract class AxiomSoapHeader extends AxiomSoapElement implements SoapHeader {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public Iterator<SoapHeaderElement> examineAllHeaderElements() {
 		try {
 			return new AxiomSoapHeaderElementIterator(getAxiomHeader().examineAllHeaderBlocks());
@@ -98,7 +96,6 @@ abstract class AxiomSoapHeader extends AxiomSoapElement implements SoapHeader {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public Iterator<SoapHeaderElement> examineHeaderElements(QName name) throws SoapHeaderException {
 		try {
 			return new AxiomSoapHeaderElementIterator(getAxiomHeader().getChildrenWithName(name));

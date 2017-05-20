@@ -42,13 +42,12 @@ class AxiomSoap11Header extends AxiomSoapHeader implements Soap11Header {
 	}
 
 	@Override
-	@SuppressWarnings("unchecked")
 	public Iterator<SoapHeaderElement> examineHeaderElementsToProcess(final String[] actors) {
 		RolePlayer rolePlayer = null;
 		if (!ObjectUtils.isEmpty(actors)) {
 			rolePlayer = new RolePlayer() {
 
-				public List<?> getRoles() {
+				public List<String> getRoles() {
 					return Arrays.asList(actors);
 				}
 
@@ -57,7 +56,7 @@ class AxiomSoap11Header extends AxiomSoapHeader implements Soap11Header {
 				}
 			};
 		}
-		Iterator<SOAPHeaderBlock> result = (Iterator<SOAPHeaderBlock>)getAxiomHeader().getHeadersToProcess(rolePlayer);
+		Iterator<SOAPHeaderBlock> result = getAxiomHeader().getHeadersToProcess(rolePlayer);
 		return new AxiomSoapHeaderElementIterator(result);
 	}
 }

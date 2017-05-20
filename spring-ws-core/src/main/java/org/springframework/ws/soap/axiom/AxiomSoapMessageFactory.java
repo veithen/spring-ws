@@ -30,12 +30,11 @@ import org.apache.axiom.om.OMAbstractFactory;
 import org.apache.axiom.om.OMException;
 import org.apache.axiom.om.impl.MTOMConstants;
 import org.apache.axiom.soap.SOAP11Constants;
-import org.apache.axiom.soap.SOAP11Version;
 import org.apache.axiom.soap.SOAP12Constants;
-import org.apache.axiom.soap.SOAP12Version;
 import org.apache.axiom.soap.SOAPFactory;
 import org.apache.axiom.soap.SOAPMessage;
 import org.apache.axiom.soap.SOAPModelBuilder;
+import org.apache.axiom.soap.SOAPVersion;
 import org.apache.axiom.soap.impl.builder.MTOMStAXSOAPModelBuilder;
 import org.apache.axiom.soap.impl.builder.StAXSOAPModelBuilder;
 import org.apache.commons.logging.Log;
@@ -372,13 +371,12 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 		return inputFactory;
 	}
 
-
 	public String toString() {
 		StringBuilder builder = new StringBuilder("AxiomSoapMessageFactory[");
-		if (soapFactory.getSOAPVersion() == SOAP11Version.getSingleton()) {
+		if (soapFactory.getSOAPVersion() == SOAPVersion.SOAP11) {
 			builder.append("SOAP 1.1");
 		}
-		else if (soapFactory.getSOAPVersion() == SOAP12Version.getSingleton()) {
+		else if (soapFactory.getSOAPVersion() == SOAPVersion.SOAP12) {
 			builder.append("SOAP 1.2");
 		}
 		builder.append(',');

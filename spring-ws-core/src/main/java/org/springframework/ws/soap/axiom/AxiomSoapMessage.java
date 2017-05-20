@@ -386,7 +386,6 @@ public class AxiomSoapMessage extends AbstractSoapMessage implements StreamingWe
 
 		private final Iterator<String> iterator;
 
-		@SuppressWarnings("unchecked")
 		private AxiomAttachmentIterator() {
 			iterator = attachments.getContentIDSet().iterator();
 		}
