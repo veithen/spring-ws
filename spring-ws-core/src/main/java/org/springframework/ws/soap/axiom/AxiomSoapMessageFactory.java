@@ -19,15 +19,30 @@ package org.springframework.ws.soap.axiom;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.text.ParseException;
 import java.util.Iterator;
 import java.util.Locale;
+
+import javax.activation.DataHandler;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+import javax.xml.transform.stax.StAXSource;
+import javax.xml.transform.stream.StreamSource;
 
 import org.apache.axiom.attachments.Attachments;
+import org.apache.axiom.blob.Blobs;
+import org.apache.axiom.blob.MemoryBlob;
+import org.apache.axiom.blob.WritableBlob;
+import org.apache.axiom.blob.WritableBlobFactory;
+import org.apache.axiom.mime.ContentType;
+import org.apache.axiom.mime.MediaType;
+import org.apache.axiom.mime.MultipartBody;
+import org.apache.axiom.mime.Part;
 import org.apache.axiom.om.OMAbstractFactory;
+import org.apache.axiom.om.OMAttachmentAccessor;
 import org.apache.axiom.om.OMException;
+import org.apache.axiom.om.OMXMLBuilderFactory;
 import org.apache.axiom.om.impl.MTOMConstants;
 import org.apache.axiom.soap.SOAP11Constants;
 import org.apache.axiom.soap.SOAP12Constants;
@@ -35,8 +50,6 @@ import org.apache.axiom.soap.SOAPFactory;
 import org.apache.axiom.soap.SOAPMessage;
 import org.apache.axiom.soap.SOAPModelBuilder;
 import org.apache.axiom.soap.SOAPVersion;
-import org.apache.axiom.soap.impl.builder.MTOMStAXSOAPModelBuilder;
-import org.apache.axiom.soap.impl.builder.StAXSOAPModelBuilder;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -83,10 +96,6 @@ import org.springframework.ws.transport.TransportInputStream;
 public class AxiomSoapMessageFactory implements SoapMessageFactory, InitializingBean {
 
 	private static final String CHARSET_PARAMETER = "charset";
-
-	private static final String DEFAULT_CHARSET_ENCODING = "UTF-8";
-
-	private static final String MULTI_PART_RELATED_CONTENT_TYPE = "multipart/related";
 
 	private static final Log logger = LogFactory.getLog(AxiomSoapMessageFactory.class);
 
@@ -224,20 +233,35 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 			inputFactory = createXmlInputFactory();
 		}
 		TransportInputStream transportInputStream = (TransportInputStream) inputStream;
-		String contentType = getHeaderValue(transportInputStream, TransportConstants.HEADER_CONTENT_TYPE);
-		if (!StringUtils.hasLength(contentType)) {
+		String contentTypeString = getHeaderValue(transportInputStream, TransportConstants.HEADER_CONTENT_TYPE);
+		ContentType contentType;
+		if (StringUtils.hasLength(contentTypeString)) {
+			try {
+				contentType = new ContentType(contentTypeString);
+			}
+			catch (ParseException ex) {
+				throw new AxiomSoapMessageCreationException("Could not parse content type", ex);
+			}
+		}
+		else {
 			if (logger.isDebugEnabled()) {
 				logger.debug("TransportInputStream has no Content-Type header; defaulting to \"" +
 						soapFactory.getSOAPVersion().getMediaType() + "\"");
 			}
-			contentType = soapFactory.getSOAPVersion().getMediaType().toString();
+			contentType = new ContentType(soapFactory.getSOAPVersion().getMediaType());
 		}
 		String soapAction = getHeaderValue(transportInputStream, TransportConstants.HEADER_SOAP_ACTION);
 		if (!StringUtils.hasLength(soapAction)) {
-			soapAction = SoapUtils.extractActionFromContentType(contentType);
+			soapAction = contentType.getParameter("action");
+			if (soapAction == null) {
+				soapAction = TransportConstants.EMPTY_SOAP_ACTION;
+			}
+			else {
+				soapAction = "\"" + soapAction + "\"";
+			}
 		}
 		try {
-			if (isMultiPartRelated(contentType)) {
+			if (contentType.getMediaType().equals(MediaType.MULTIPART_RELATED)) {
 				return createMultiPartAxiomSoapMessage(inputStream, contentType, soapAction);
 			}
 			else {
@@ -261,94 +285,76 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 		return contentType;
 	}
 
-	private boolean isMultiPartRelated(String contentType) {
-		contentType = contentType.toLowerCase(Locale.ENGLISH);
-		return contentType.contains(MULTI_PART_RELATED_CONTENT_TYPE);
-	}
-
-	@SuppressWarnings("deprecation")
 	/** Creates an AxiomSoapMessage without attachments. */
-	private AxiomSoapMessage createAxiomSoapMessage(InputStream inputStream, String contentType, String soapAction)
+	private AxiomSoapMessage createAxiomSoapMessage(InputStream inputStream, ContentType contentType, String soapAction)
 			throws XMLStreamException {
-		XMLStreamReader reader = inputFactory.createXMLStreamReader(inputStream, getCharSetEncoding(contentType));
-		String envelopeNamespace = getSoapEnvelopeNamespace(contentType);
-		SOAPModelBuilder builder = new StAXSOAPModelBuilder(reader, soapFactory, envelopeNamespace);
+		XMLStreamReader reader = inputFactory.createXMLStreamReader(inputStream, contentType.getParameter(CHARSET_PARAMETER));
+		SOAPModelBuilder builder = OMXMLBuilderFactory.createStAXSOAPModelBuilder(soapFactory.getMetaFactory(), reader);
 		SOAPMessage soapMessage = builder.getSOAPMessage();
+		validateSoapVersion(contentType.getMediaType(), soapMessage);
 		return new AxiomSoapMessage(soapMessage, soapAction, payloadCaching, langAttributeOnSoap11FaultString);
 	}
 
-	@SuppressWarnings("deprecation")
 	/** Creates an AxiomSoapMessage with attachments. */
 	private AxiomSoapMessage createMultiPartAxiomSoapMessage(InputStream inputStream,
-															 String contentType,
+															 ContentType contentType,
 															 String soapAction) throws XMLStreamException {
-		Attachments attachments =
-				new Attachments(inputStream, contentType, attachmentCaching, attachmentCacheDir.getAbsolutePath(),
-						Integer.toString(attachmentCacheThreshold));
-		XMLStreamReader reader = inputFactory.createXMLStreamReader(attachments.getRootPartInputStream(),
-				getCharSetEncoding(attachments.getRootPartContentType()));
-		SOAPModelBuilder builder;
-		String envelopeNamespace = getSoapEnvelopeNamespace(contentType);
-		if (MTOMConstants.SWA_TYPE.equals(attachments.getAttachmentSpecType()) ||
-				MTOMConstants.SWA_TYPE_12.equals(attachments.getAttachmentSpecType())) {
-			builder = new StAXSOAPModelBuilder(reader, soapFactory, envelopeNamespace);
-		}
-		else if (MTOMConstants.MTOM_TYPE.equals(attachments.getAttachmentSpecType())) {
-			builder = new MTOMStAXSOAPModelBuilder(reader, attachments, envelopeNamespace);
+		WritableBlobFactory<?> attachmentBlobFactory;
+		if (attachmentCaching) {
+			attachmentBlobFactory = new WritableBlobFactory<WritableBlob>() {
+				@Override
+				public WritableBlob createBlob() {
+					return Blobs.createOverflowableBlob(
+							attachmentCacheThreshold, "attachment", ".tmp", attachmentCacheDir);
+				}
+			};
 		}
 		else {
-			throw new AxiomSoapMessageCreationException(
-					"Unknown attachment type: [" + attachments.getAttachmentSpecType() + "]");
+			attachmentBlobFactory = MemoryBlob.FACTORY;
 		}
+		final MultipartBody multipartBody = MultipartBody.builder()
+				.setInputStream(inputStream)
+				.setContentType(contentType)
+				.setAttachmentBlobFactory(attachmentBlobFactory)
+				.build();
+		Part rootPart = multipartBody.getRootPart();
+		ContentType rootPartContentType = rootPart.getContentType();
+		XMLStreamReader reader = inputFactory.createXMLStreamReader(rootPart.getInputStream(false),
+				rootPartContentType.getParameter(CHARSET_PARAMETER));
+		MediaType soapMediaType;
+		SOAPModelBuilder builder;
+		if (rootPartContentType.getMediaType().equals(MediaType.APPLICATION_XOP_XML)) {
+			soapMediaType = new MediaType(rootPartContentType.getParameter("type"));
+			// This is more complicated than it should be because Spring-WS wants to create the StAX
+			// parser itself, but the Axiom API encourages passing the InputStream directly.
+			builder = OMXMLBuilderFactory.createSOAPModelBuilder(
+					soapFactory.getMetaFactory(),
+					new StAXSource(reader),
+					new OMAttachmentAccessor() {
+						@Override
+						public DataHandler getDataHandler(String contentID) {
+							Part part = multipartBody.getPart(contentID);
+							return part == null ? null : part.getDataHandler();
+						}
+					});
+		}
+		else {
+			soapMediaType = rootPartContentType.getMediaType();
+			builder = OMXMLBuilderFactory.createStAXSOAPModelBuilder(
+					soapFactory.getMetaFactory(), reader);
+		}
+		SOAPMessage soapMessage = builder.getSOAPMessage();
+		validateSoapVersion(soapMediaType, soapMessage);
 		return new AxiomSoapMessage(builder.getSOAPMessage(), attachments, soapAction, payloadCaching,
 				langAttributeOnSoap11FaultString);
 	}
 
-	private String getSoapEnvelopeNamespace(String contentType) {
-		if (contentType.contains(SOAP11Constants.SOAP_11_CONTENT_TYPE)) {
-			return SOAP11Constants.SOAP_ENVELOPE_NAMESPACE_URI;
+	private void validateSoapVersion(MediaType mediaType, SOAPMessage soapMessage) {
+		if (!mediaType.equals(soapFactory.getSOAPVersion().getMediaType())) {
+			throw new AxiomSoapMessageCreationException("Unexpected content type '" + mediaType + "'");
 		}
-		else if (contentType.contains(SOAP12Constants.SOAP_12_CONTENT_TYPE)) {
-			return SOAP12Constants.SOAP_ENVELOPE_NAMESPACE_URI;
-		}
-		else {
-			throw new AxiomSoapMessageCreationException("Unknown content type '" + contentType + "'");
-		}
-
-	}
-
-	/**
-	 * Returns the character set from the given content type. Mostly copied
-	 *
-	 * @return the character set encoding
-	 */
-	protected String getCharSetEncoding(String contentType) {
-		int charSetIdx = contentType.indexOf(CHARSET_PARAMETER);
-		if (charSetIdx == -1) {
-			return DEFAULT_CHARSET_ENCODING;
-		}
-		int eqIdx = contentType.indexOf("=", charSetIdx);
-
-		int indexOfSemiColon = contentType.indexOf(";", eqIdx);
-		String value;
-
-		if (indexOfSemiColon > 0) {
-			value = contentType.substring(eqIdx + 1, indexOfSemiColon);
-		}
-		else {
-			value = contentType.substring(eqIdx + 1, contentType.length()).trim();
-		}
-		if (value.startsWith("\"")) {
-			value = value.substring(1);
-		}
-		if (value.endsWith("\"")) {
-			return value.substring(0, value.length() - 1);
-		}
-		if ("null".equalsIgnoreCase(value)) {
-			return DEFAULT_CHARSET_ENCODING;
-		}
-		else {
-			return value.trim();
+		if (soapMessage.getOMFactory() != soapFactory) {
+			throw new AxiomSoapMessageCreationException("SOAP version mismatch");
 		}
 	}
 
@@ -370,6 +376,7 @@ public class AxiomSoapMessageFactory implements SoapMessageFactory, Initializing
 		inputFactory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, supportingExternalEntities);
 		return inputFactory;
 	}
+
 
 	public String toString() {
 		StringBuilder builder = new StringBuilder("AxiomSoapMessageFactory[");
